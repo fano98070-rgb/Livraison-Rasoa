@@ -15,23 +15,15 @@
             border-left-color: #15803d;
             animation: spin 1s linear infinite;
         }
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
-        .order-card, .client-card {
-            transition: transform 0.1s ease;
-        }
-        .order-card:active, .client-card:active {
-            transform: scale(0.98);
-        }
-        .animate-in {
-            animation: fadeIn 0.3s ease-out;
-        }
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(10px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .order-card { transition: all 0.2s ease; }
+        .order-card:active { transform: scale(0.97); }
+        .animate-in { animation: fadeIn 0.3s ease-out; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        
+        /* Alertes visuelles */
+        .border-today { border-left: 6px solid #ef4444 !important; }
+        .border-tomorrow { border-left: 6px solid #f97316 !important; }
     </style>
 </head>
 <body class="bg-slate-50 text-slate-900 font-sans pb-24">
@@ -47,7 +39,6 @@
         import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, collection, doc, onSnapshot, updateDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        // Configuration Firebase
         const firebaseConfig = {
             apiKey: "AIzaSyBYcWoieRAH-uY1LXCiXVqLqFdijDo17dI",
             authDomain: "rasoa-pro.firebaseapp.com",
@@ -69,20 +60,54 @@
             user: null,
             orders: [],
             clients: {},
-            currentTab: 'missions', // 'missions' ou 'clients'
+            currentTab: 'missions',
             filter: 'pending',
+            dateFilter: 'today', 
             searchQuery: '',
             selectedOrderId: null,
             loading: true
         };
 
+        // Utilitaire pour normaliser les dates venant de Firestore
+        function parseDate(val) {
+            if (!val) return null;
+            if (val.seconds) return new Date(val.seconds * 1000); // Timestamp Firebase
+            return new Date(val); // String ou Number
+        }
+
+        function isToday(date) {
+            if(!date) return false;
+            const d = parseDate(date);
+            return d && d.toDateString() === new Date().toDateString();
+        }
+
+        function isTomorrow(date) {
+            if(!date) return false;
+            const d = parseDate(date);
+            const tomorrow = new Date();
+            tomorrow.setDate(tomorrow.getDate() + 1);
+            return d && d.toDateString() === tomorrow.toDateString();
+        }
+
         function getEnrichedOrder(order) {
-            const client = state.clients[order.clientId] || {};
+            const targetId = order.clientId || order.customerID || order.uid || order.client_id;
+            const client = state.clients[targetId] || {};
+            
+            const amount = order.total || order.prix || order.amount || order.montant || 0;
+            const phone = order.phone || order.tel || order.telephone || client.telephone || client.phone || "";
+            const address = order.address || order.adresse || order.lieu || order.quartier || client.adresse || client.lieu || "Lieu non précisé";
+            const customerName = order.customerName || order.nom || client.nom || "Client inconnu";
+            const orderDate = order.date || order.createdAt || order.date_livraison;
+
             return {
                 ...order,
-                displayCustomer: order.customerName || order.nom || client.nom || client.name || 'Client Inconnu',
-                displayAddress: order.address || order.adresse || client.adresse || client.address || 'Adresse à confirmer',
-                displayPhone: order.phone || order.tel || client.telephone || client.phone || client.tel || null
+                displayCustomer: customerName,
+                displayAddress: address,
+                displayPhone: phone,
+                displayAmount: amount,
+                orderDate: orderDate,
+                isToday: isToday(orderDate),
+                isTomorrow: isTomorrow(orderDate)
             };
         }
 
@@ -100,58 +125,68 @@
             } else if (state.currentTab === 'clients') {
                 renderClientsView(appElement);
             }
-            
             renderNavBar(appElement);
         }
 
         function renderListView(container) {
             const enrichedOrders = state.orders.map(getEnrichedOrder);
+            
             const filteredOrders = enrichedOrders.filter(order => {
-                const status = order.status || 'pending';
-                if (state.filter === 'pending') return status === 'pending';
-                return status === state.filter;
+                const statusMatch = (order.status || 'pending') === state.filter;
+                let dateMatch = true;
+                if (state.dateFilter === 'today') dateMatch = order.isToday;
+                else if (state.dateFilter === 'tomorrow') dateMatch = order.isTomorrow;
+                return statusMatch && dateMatch;
             });
 
             container.innerHTML = `
                 <header class="bg-green-700 text-white p-4 sticky top-0 z-10 shadow-md">
                     <div class="flex justify-between items-center max-w-2xl mx-auto">
                         <div>
-                            <h1 class="text-xl font-bold tracking-tight">Missions Livraison</h1>
-                            <p class="text-[10px] opacity-80 uppercase font-black">Rasoa Pro V4</p>
+                            <h1 class="text-xl font-bold tracking-tight">Rasoa Livreur</h1>
+                            <p class="text-[9px] opacity-80 uppercase font-black tracking-widest">Calendrier Sync</p>
                         </div>
-                        <i class="fas fa-truck-loading text-xl opacity-50"></i>
+                        <div class="flex gap-1.5 bg-green-800/40 p-1 rounded-xl">
+                             <button onclick="window.setDateFilter('today')" class="px-3 py-2 rounded-lg text-[10px] font-black transition-all ${state.dateFilter === 'today' ? 'bg-red-500 text-white shadow-lg scale-105' : 'text-white/60'}">J-J</button>
+                             <button onclick="window.setDateFilter('tomorrow')" class="px-3 py-2 rounded-lg text-[10px] font-black transition-all ${state.dateFilter === 'tomorrow' ? 'bg-orange-500 text-white shadow-lg scale-105' : 'text-white/60'}">J+1</button>
+                             <button onclick="window.setDateFilter('all')" class="px-3 py-2 rounded-lg text-[10px] font-black transition-all ${state.dateFilter === 'all' ? 'bg-white text-green-700' : 'text-white/60'}">TOUT</button>
+                        </div>
                     </div>
                 </header>
 
                 <main class="max-w-2xl mx-auto p-4">
-                    <div class="flex bg-white rounded-xl p-1 mb-6 shadow-sm border border-slate-200">
-                        <button onclick="window.setFilter('pending')" class="flex-1 py-2.5 text-xs font-black rounded-lg transition-all ${state.filter === 'pending' ? 'bg-green-100 text-green-700 shadow-inner' : 'text-slate-500'} uppercase">À faire</button>
-                        <button onclick="window.setFilter('ongoing')" class="flex-1 py-2.5 text-xs font-black rounded-lg transition-all ${state.filter === 'ongoing' ? 'bg-orange-100 text-orange-700 shadow-inner' : 'text-slate-500'} uppercase">En cours</button>
-                        <button onclick="window.setFilter('delivered')" class="flex-1 py-2.5 text-xs font-black rounded-lg transition-all ${state.filter === 'delivered' ? 'bg-blue-100 text-blue-700 shadow-inner' : 'text-slate-500'} uppercase">Terminé</button>
+                    <div class="flex bg-white rounded-2xl p-1 mb-6 shadow-sm border border-slate-200">
+                        <button onclick="window.setFilter('pending')" class="flex-1 py-3 text-[10px] font-black rounded-xl ${state.filter === 'pending' ? 'bg-green-100 text-green-700 shadow-inner' : 'text-slate-400'} uppercase">À faire</button>
+                        <button onclick="window.setFilter('ongoing')" class="flex-1 py-3 text-[10px] font-black rounded-xl ${state.filter === 'ongoing' ? 'bg-orange-100 text-orange-700 shadow-inner' : 'text-slate-400'} uppercase">En cours</button>
+                        <button onclick="window.setFilter('delivered')" class="flex-1 py-3 text-[10px] font-black rounded-xl ${state.filter === 'delivered' ? 'bg-blue-100 text-blue-700 shadow-inner' : 'text-slate-400'} uppercase">Livré</button>
                     </div>
 
                     <div class="space-y-4">
                         ${filteredOrders.length === 0 ? `
-                            <div class="text-center py-20 text-slate-300">
-                                <i class="fas fa-box-open text-6xl mb-4 opacity-10"></i>
-                                <p class="text-lg font-medium">Aucune mission</p>
+                            <div class="text-center py-24 text-slate-300">
+                                <i class="fas fa-calendar-check text-6xl mb-4 opacity-10"></i>
+                                <p class="font-bold text-slate-400">Aucune mission trouvée</p>
                             </div>
                         ` : filteredOrders.map(order => `
-                            <div onclick="window.selectOrder('${order.id}')" class="order-card bg-white p-5 rounded-2xl shadow-sm border border-slate-200 cursor-pointer animate-in relative overflow-hidden">
-                                <div class="flex justify-between items-start mb-3">
-                                    <span class="text-[10px] font-black text-slate-300 uppercase tracking-tighter">ID: ${order.id.substring(0, 10)}</span>
-                                    <span class="px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${getStatusStyle(order.status)}">
-                                        ${getStatusLabel(order.status)}
-                                    </span>
+                            <div onclick="window.selectOrder('${order.id}')" class="order-card bg-white p-5 rounded-2xl shadow-sm border border-slate-200 animate-in relative ${order.isToday ? 'border-today' : (order.isTomorrow ? 'border-tomorrow' : '')}">
+                                ${order.isToday ? '<span class="absolute top-0 right-5 bg-red-500 text-white text-[8px] font-black px-2 py-1 rounded-b-lg uppercase tracking-widest">Urgent : Aujourd\'hui</span>' : ''}
+                                ${order.isTomorrow ? '<span class="absolute top-0 right-5 bg-orange-500 text-white text-[8px] font-black px-2 py-1 rounded-b-lg uppercase tracking-widest">Demain</span>' : ''}
+                                
+                                <div class="flex justify-between items-start mb-2">
+                                    <span class="text-[9px] font-bold text-slate-300">#${order.id.substring(0, 8)}</span>
                                 </div>
-                                <h3 class="font-black text-xl text-slate-800 mb-1 leading-none">${order.displayCustomer}</h3>
-                                <div class="flex items-center text-slate-500 text-sm mb-4">
-                                    <i class="fas fa-map-marker-alt mr-2 text-red-500 text-xs"></i>
-                                    <span class="truncate font-medium">${order.displayAddress}</span>
-                                </div>
-                                <div class="flex justify-between items-center pt-3 border-t border-slate-50">
-                                    <span class="text-slate-400 text-[10px] font-bold uppercase"><i class="far fa-clock mr-1"></i> ${order.createdAt ? new Date(order.createdAt).toLocaleDateString('fr-FR') : 'Aujourd\'hui'}</span>
-                                    <span class="text-green-700 font-black text-lg">${order.total || order.prix || 0} Ar</span>
+                                <h3 class="font-black text-xl text-slate-800 leading-tight mb-1">${order.displayCustomer}</h3>
+                                <p class="text-slate-500 text-sm mb-4 flex items-center">
+                                    <i class="fas fa-location-arrow mr-2 text-red-500"></i> ${order.displayAddress}
+                                </p>
+                                <div class="flex justify-between items-center pt-4 border-t border-slate-50">
+                                    <div class="flex items-center gap-2">
+                                        <div class="w-2 h-2 rounded-full ${order.isToday ? 'bg-red-500 animate-pulse' : (order.isTomorrow ? 'bg-orange-500' : 'bg-slate-300')}"></div>
+                                        <span class="text-slate-400 text-[10px] font-black uppercase tracking-tighter">
+                                            ${order.orderDate ? parseDate(order.orderDate).toLocaleDateString('fr-FR') : 'Date...'}
+                                        </span>
+                                    </div>
+                                    <span class="text-green-700 font-black text-xl">${order.displayAmount} Ar</span>
                                 </div>
                             </div>
                         `).join('')}
@@ -164,58 +199,32 @@
             const clientList = Object.keys(state.clients).map(id => ({ id, ...state.clients[id] }));
             const filteredClients = clientList.filter(c => {
                 const name = (c.nom || c.name || '').toLowerCase();
-                const phone = (c.telephone || c.phone || c.tel || '').toLowerCase();
+                const phone = (c.telephone || c.phone || '').toLowerCase();
                 return name.includes(state.searchQuery.toLowerCase()) || phone.includes(state.searchQuery.toLowerCase());
             });
 
             container.innerHTML = `
                 <header class="bg-slate-800 text-white p-4 sticky top-0 z-10 shadow-md">
                     <div class="max-w-2xl mx-auto">
-                        <h1 class="text-xl font-bold mb-3 tracking-tight">Répertoire Clients</h1>
-                        <div class="relative">
-                            <i class="fas fa-search absolute left-4 top-1/2 -translate-y-1/2 text-slate-400"></i>
-                            <input type="text" placeholder="Rechercher un nom ou numéro..." 
-                                value="${state.searchQuery}"
-                                oninput="window.setSearch(this.value)"
-                                class="w-full bg-slate-700 border-none rounded-xl py-3 pl-12 pr-4 text-white text-sm focus:ring-2 focus:ring-green-500 transition-all outline-none">
-                        </div>
+                        <h1 class="text-xl font-bold mb-3">Répertoire Clients</h1>
+                        <input type="text" placeholder="Nom ou téléphone..." 
+                            value="${state.searchQuery}"
+                            oninput="window.setSearch(this.value)"
+                            class="w-full bg-slate-700 border-none rounded-xl py-3 px-4 text-white text-sm outline-none focus:ring-2 focus:ring-green-500">
                     </div>
                 </header>
-
                 <main class="max-w-2xl mx-auto p-4">
                     <div class="grid gap-3">
-                        ${filteredClients.length === 0 ? `
-                             <div class="text-center py-20 text-slate-300">
-                                <i class="fas fa-user-slash text-6xl mb-4 opacity-10"></i>
-                                <p class="text-lg font-medium">Aucun client trouvé</p>
-                            </div>
-                        ` : filteredClients.map(client => `
-                            <div class="client-card bg-white p-4 rounded-xl shadow-sm border border-slate-200 animate-in">
-                                <div class="flex items-center justify-between mb-2">
-                                    <h3 class="font-black text-lg text-slate-800">${client.nom || client.name || 'Sans Nom'}</h3>
-                                    <div class="bg-slate-100 text-slate-400 px-2 py-0.5 rounded text-[10px] font-bold">ID: ${client.id.substring(0,6)}</div>
+                        ${filteredClients.map(client => `
+                            <div class="bg-white p-5 rounded-2xl shadow-sm border border-slate-200">
+                                <h3 class="font-black text-xl text-slate-800 mb-3">${client.nom || client.name || 'Client'}</h3>
+                                <div class="space-y-2 mb-4 text-sm font-medium text-slate-600">
+                                    <p class="flex items-center"><i class="fas fa-phone mr-3 text-blue-500 w-4"></i> ${client.telephone || client.phone || 'N/A'}</p>
+                                    <p class="flex items-start"><i class="fas fa-map-marker-alt mr-3 text-red-500 w-4 mt-1"></i> ${client.adresse || client.lieu || 'N/A'}</p>
                                 </div>
-                                
-                                <div class="space-y-2 mb-4">
-                                    <div class="flex items-center text-sm text-slate-600">
-                                        <i class="fas fa-phone-alt mr-3 text-blue-500 w-4"></i>
-                                        <a href="tel:${client.telephone || client.phone || client.tel}" class="font-bold text-blue-600">
-                                            ${client.telephone || client.phone || client.tel || 'Non renseigné'}
-                                        </a>
-                                    </div>
-                                    <div class="flex items-start text-sm text-slate-600">
-                                        <i class="fas fa-map-pin mr-3 text-red-500 w-4 mt-1"></i>
-                                        <span class="font-medium">${client.adresse || client.address || 'Pas d\'adresse enregistrée'}</span>
-                                    </div>
-                                </div>
-
                                 <div class="flex gap-2">
-                                    <a href="tel:${client.telephone || client.phone || client.tel}" class="flex-1 bg-blue-50 text-blue-600 py-2 rounded-lg text-center font-black text-[10px] uppercase tracking-widest">
-                                        <i class="fas fa-phone mr-1"></i> Appeler
-                                    </a>
-                                    <button onclick="window.openMaps('${encodeURIComponent(client.adresse || client.address)}')" class="flex-1 bg-slate-50 text-slate-600 py-2 rounded-lg text-center font-black text-[10px] uppercase tracking-widest">
-                                        <i class="fas fa-directions mr-1"></i> Itinéraire
-                                    </button>
+                                    <a href="tel:${client.telephone || client.phone}" class="flex-1 bg-blue-600 text-white py-3 rounded-xl text-center font-black text-[10px] uppercase shadow-lg shadow-blue-100">Appeler</a>
+                                    <button onclick="window.openMaps('${encodeURIComponent(client.adresse || client.lieu)}')" class="flex-1 bg-slate-100 text-slate-600 py-3 rounded-xl text-center font-black text-[10px] uppercase">GPS</button>
                                 </div>
                             </div>
                         `).join('')}
@@ -231,58 +240,46 @@
 
             container.innerHTML = `
                 <main class="max-w-2xl mx-auto p-4 animate-in">
-                    <button onclick="window.selectOrder(null)" class="mb-6 text-green-700 font-black flex items-center text-sm uppercase tracking-widest">
-                        <i class="fas fa-arrow-left mr-2"></i> Retour aux missions
+                    <button onclick="window.selectOrder(null)" class="mb-6 text-green-700 font-black text-[10px] uppercase flex items-center tracking-widest">
+                        <i class="fas fa-arrow-left mr-2"></i> Retour
                     </button>
                     
-                    <div class="bg-white rounded-[2rem] shadow-2xl overflow-hidden border border-slate-200 mb-20">
+                    <div class="bg-white rounded-[2.5rem] shadow-2xl overflow-hidden border border-slate-200 mb-20">
                         <div class="p-8 bg-slate-50 border-b border-slate-200">
-                            <h2 class="text-3xl font-black text-slate-900 mb-8 leading-tight">Détails de la Livraison</h2>
-                            <div class="space-y-8">
-                                <div class="flex items-start">
-                                    <div class="bg-white p-3.5 rounded-2xl shadow-sm mr-5 text-slate-400"><i class="fas fa-id-card text-2xl"></i></div>
-                                    <div class="flex-1">
-                                        <p class="text-[10px] text-slate-400 uppercase font-black tracking-widest mb-1">Destinataire</p>
-                                        <p class="font-black text-2xl text-slate-800">${order.displayCustomer}</p>
-                                    </div>
-                                </div>
-                                <div class="flex items-start">
-                                    <div class="bg-white p-3.5 rounded-2xl shadow-sm mr-5 text-red-500"><i class="fas fa-map-pin text-2xl"></i></div>
-                                    <div class="flex-1">
-                                        <p class="text-[10px] text-slate-400 uppercase font-black tracking-widest mb-1">Destination</p>
-                                        <p class="font-bold text-slate-700 text-lg leading-snug">${order.displayAddress}</p>
-                                        <button onclick="window.openMaps('${encodeURIComponent(order.displayAddress)}')" class="mt-4 w-full bg-slate-800 text-white py-3 rounded-xl font-black text-xs uppercase tracking-widest flex items-center justify-center">
-                                            <i class="fas fa-route mr-2"></i> Itinéraire GPS
-                                        </button>
-                                    </div>
-                                </div>
-                                <div class="flex items-start">
-                                    <div class="bg-white p-3.5 rounded-2xl shadow-sm mr-5 text-blue-500"><i class="fas fa-phone-alt text-2xl"></i></div>
-                                    <div class="flex-1">
-                                        <p class="text-[10px] text-slate-400 uppercase font-black tracking-widest mb-1">Contact</p>
-                                        <a href="tel:${order.displayPhone}" class="font-black text-3xl text-blue-600 block py-1">${order.displayPhone || 'Inconnu'}</a>
-                                    </div>
-                                </div>
+                            <div class="flex justify-center mb-4">
+                                ${order.isToday ? '<span class="bg-red-100 text-red-600 px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest border border-red-200">Livraison Aujourd\'hui</span>' : ''}
+                                ${order.isTomorrow ? '<span class="bg-orange-100 text-orange-600 px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest border border-orange-200">Livraison Demain</span>' : ''}
                             </div>
+                            <h2 class="text-3xl font-black text-slate-900 leading-tight mb-2 text-center uppercase tracking-tighter">${order.displayCustomer}</h2>
+                            <p class="text-center font-bold text-blue-600 text-xl mb-4"><i class="fas fa-phone-alt mr-2 text-sm"></i> ${order.displayPhone}</p>
                         </div>
 
-                        <div class="p-8">
-                            <div class="bg-slate-50 rounded-2xl p-6 mb-10 border border-slate-100">
-                                <li class="flex justify-between items-center font-black text-3xl text-green-700">
-                                    <span class="text-base uppercase tracking-tighter">TOTAL À PERCEVOIR</span>
-                                    <span>${order.total || order.prix || 0} Ar</span>
-                                </li>
+                        <div class="p-8 space-y-10">
+                            <div class="bg-white p-6 rounded-3xl border-2 border-slate-100 shadow-sm">
+                                <p class="text-[10px] text-slate-400 uppercase font-black mb-3 tracking-widest">Lieu de livraison</p>
+                                <p class="font-bold text-slate-800 text-2xl leading-snug mb-6">${order.displayAddress}</p>
+                                <button onclick="window.openMaps('${encodeURIComponent(order.displayAddress)}')" class="w-full bg-slate-900 text-white py-5 rounded-2xl font-black text-xs uppercase tracking-widest shadow-xl flex items-center justify-center">
+                                    <i class="fas fa-location-arrow mr-2"></i> Itinéraire Maps
+                                </button>
                             </div>
 
-                            <div class="space-y-5">
+                            <div class="bg-green-700 rounded-3xl p-8 text-white shadow-xl flex justify-between items-center">
+                                <div>
+                                    <p class="text-[10px] font-black uppercase opacity-60 mb-1">Montant à collecter</p>
+                                    <div class="text-4xl font-black">${order.displayAmount} Ar</div>
+                                </div>
+                                <i class="fas fa-wallet text-4xl opacity-30"></i>
+                            </div>
+
+                            <div class="space-y-4 pt-4">
                                 ${(!order.status || order.status === 'pending') ? `
-                                    <button onclick="window.updateStatus('${order.id}', 'ongoing')" class="w-full bg-orange-500 text-white font-black py-6 rounded-[1.5rem] shadow-xl text-xl uppercase tracking-widest">Démarrer Livraison</button>
+                                    <button onclick="window.updateStatus('${order.id}', 'ongoing')" class="w-full bg-orange-500 text-white font-black py-7 rounded-[1.8rem] shadow-xl text-xl uppercase tracking-widest active:scale-95 transition-all">Démarrer Livraison</button>
                                 ` : ''}
                                 ${order.status === 'ongoing' ? `
-                                    <button onclick="window.updateStatus('${order.id}', 'delivered')" class="w-full bg-green-600 text-white font-black py-6 rounded-[1.5rem] shadow-xl text-xl uppercase tracking-widest">Confirmer Livraison</button>
+                                    <button onclick="window.updateStatus('${order.id}', 'delivered')" class="w-full bg-green-600 text-white font-black py-7 rounded-[1.8rem] shadow-xl text-xl uppercase tracking-widest active:scale-95 transition-all">Marquer comme Livré</button>
                                 ` : ''}
                                 ${order.status === 'delivered' ? `
-                                    <div class="bg-blue-50 text-blue-700 p-6 rounded-[1.5rem] text-center font-black border-2 border-blue-200">LIVRAISON TERMINÉE</div>
+                                    <div class="bg-blue-600 text-white p-7 rounded-[1.8rem] text-center font-black uppercase text-xl shadow-lg">Effectué ✅</div>
                                 ` : ''}
                             </div>
                         </div>
@@ -293,35 +290,34 @@
 
         function renderNavBar(container) {
             const nav = document.createElement('nav');
-            nav.className = "fixed bottom-0 w-full bg-white border-t border-slate-200 px-8 py-3 flex justify-around items-center max-w-2xl mx-auto left-0 right-0 shadow-[0_-4px_10px_rgba(0,0,0,0.05)] z-20";
+            nav.className = "fixed bottom-0 w-full bg-white border-t border-slate-200 px-8 py-4 flex justify-around items-center max-w-2xl mx-auto left-0 right-0 shadow-[0_-10px_20px_rgba(0,0,0,0.03)] z-20";
             nav.innerHTML = `
                 <button onclick="window.switchTab('missions')" class="flex flex-col items-center ${state.currentTab === 'missions' ? 'text-green-700' : 'text-slate-300'}">
-                    <i class="fas fa-list-check text-xl"></i>
-                    <span class="text-[9px] mt-1 font-black uppercase tracking-widest">Missions</span>
+                    <i class="fas fa-truck-ramp-box text-2xl"></i>
+                    <span class="text-[9px] mt-1.5 font-black uppercase">Missions</span>
                 </button>
                 <button onclick="window.switchTab('clients')" class="flex flex-col items-center ${state.currentTab === 'clients' ? 'text-green-700' : 'text-slate-300'}">
-                    <i class="fas fa-users text-xl"></i>
-                    <span class="text-[9px] mt-1 font-black uppercase tracking-widest">Clients</span>
+                    <i class="fas fa-user-group text-2xl"></i>
+                    <span class="text-[9px] mt-1.5 font-black uppercase">Clients</span>
                 </button>
             `;
             container.appendChild(nav);
         }
 
-        // Helpers Visuels
         function getStatusStyle(status) {
-            if (status === 'ongoing') return 'bg-orange-100 text-orange-700 border border-orange-200';
-            if (status === 'delivered') return 'bg-blue-100 text-blue-700 border border-blue-200';
-            return 'bg-slate-100 text-slate-600 border border-slate-200';
+            if (status === 'ongoing') return 'bg-orange-100 text-orange-700';
+            if (status === 'delivered') return 'bg-blue-100 text-blue-700';
+            return 'bg-slate-100 text-slate-500';
         }
 
         function getStatusLabel(status) {
             if (status === 'ongoing') return 'En cours';
             if (status === 'delivered') return 'Livré';
-            return 'À faire';
+            return 'Prévu';
         }
 
-        // Actions globales
         window.setFilter = (f) => { state.filter = f; render(); };
+        window.setDateFilter = (df) => { state.dateFilter = df; render(); };
         window.selectOrder = (id) => { state.selectedOrderId = id; render(); };
         window.openMaps = (query) => { window.open(`https://www.google.com/maps/search/?api=1&query=${query}`, '_blank'); };
         window.switchTab = (tab) => { state.currentTab = tab; state.selectedOrderId = null; render(); };
@@ -331,7 +327,7 @@
             try {
                 const docRef = doc(db, ...PATH_LIVRAISONS, id);
                 await updateDoc(docRef, { status: s, lastUpdated: Date.now() });
-            } catch (err) { console.error(err); alert("Erreur Firestore"); }
+            } catch (err) { console.error(err); }
         };
 
         async function init() {
